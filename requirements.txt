@@ -6,3 +6,5 @@ beautifulsoup4
 ollama
 langchain_community
 transformers
+flake8
+coverage

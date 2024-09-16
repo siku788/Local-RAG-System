@@ -1,0 +1,185 @@
+name: RAG System CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9, '3.10']
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install flake8 pytest coverage
+
+    - name: Install Ollama
+      run: |
+        curl https://ollama.ai/install.sh | sh
+
+    - name: Start Ollama server
+      run: |
+        ollama serve &
+        sleep 10  # Give some time for the server to start
+
+    - name: Pull Mistral model
+      run: |
+        ollama pull mistral
+
+    - name: Lint with flake8
+      run: |
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: Run tests with pytest and coverage
+      run: |
+        coverage run -m pytest tests/
+        coverage xml
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+
+    - name: Archive test results
+      uses: actions/upload-artifact@v2
+      with:
+        name: test-results
+        path: test-results/
+
+    - name: Archive code coverage results
+      uses: actions/upload-artifact@v2
+      with:
+        name: code-coverage-report
+        path: coverage.xml
+
+# Add the test file content here
+# This will be saved as tests/test_rag_system.py in your repository
+
+    - name: Create test file
+      run: |
+        mkdir -p tests
+        cat << EOF > tests/test_rag_system.py
+        import unittest
+        from unittest.mock import patch, MagicMock
+        import tempfile
+        import os
+        from pathlib import Path
+
+        # Import your main application file
+        from app import (
+            setup_logging,
+            add_metadata,
+            sanitize_collection_name,
+            process_file,
+            get_embedding_model,
+            create_vector_store,
+            setup_rag_chain,
+        )
+
+        class TestDocumentProcessorRAG(unittest.TestCase):
+
+            def setUp(self):
+                # Set up any necessary test fixtures
+                self.test_dir = tempfile.mkdtemp()
+                self.log_dir = Path(self.test_dir) / "logs"
+                self.log_dir.mkdir(exist_ok=True)
+
+            def tearDown(self):
+                # Clean up after tests
+                import shutil
+                shutil.rmtree(self.test_dir)
+
+            def test_setup_logging(self):
+                logger = setup_logging("INFO")
+                self.assertIsNotNone(logger)
+                # Add more assertions to check logger configuration
+
+            def test_add_metadata(self):
+                chunks = ["chunk1", "chunk2"]
+                doc_title = "Test Document"
+                result = add_metadata(chunks, doc_title)
+                self.assertEqual(len(result), 2)
+                self.assertIn("metadata", result[0])
+                self.assertEqual(result[0]["metadata"]["title"], doc_title)
+
+            def test_sanitize_collection_name(self):
+                name = "Test Collection 123!@#"
+                sanitized = sanitize_collection_name(name)
+                self.assertRegex(sanitized, r'^[a-zA-Z0-9_-]{3,63}$')
+
+            @patch('app.PyPDFLoader')
+            @patch('app.TextLoader')
+            @patch('app.WebBaseLoader')
+            def test_process_file(self, mock_web_loader, mock_text_loader, mock_pdf_loader):
+                # Test PDF processing
+                mock_pdf_loader.return_value.load.return_value = [MagicMock(page_content="PDF content")]
+                result = process_file("test.pdf", MagicMock())
+                self.assertIsNotNone(result)
+
+                # Test TXT processing
+                mock_text_loader.return_value.load.return_value = [MagicMock(page_content="TXT content")]
+                result = process_file("test.txt", MagicMock())
+                self.assertIsNotNone(result)
+
+                # Test web processing
+                mock_web_loader.return_value.load.return_value = [MagicMock(page_content="Web content")]
+                result = process_file("http://example.com", MagicMock())
+                self.assertIsNotNone(result)
+
+            @patch('app.OllamaEmbeddings')
+            @patch('app.FastEmbedEmbeddings')
+            @patch('app.HuggingFaceEmbeddings')
+            def test_get_embedding_model(self, mock_hf, mock_fast, mock_ollama):
+                model = get_embedding_model("Ollama", MagicMock())
+                self.assertIsNotNone(model)
+                mock_ollama.assert_called_once()
+
+                model = get_embedding_model("FastEmbeddings", MagicMock())
+                self.assertIsNotNone(model)
+                mock_fast.assert_called_once()
+
+                model = get_embedding_model("HuggingFace", MagicMock())
+                self.assertIsNotNone(model)
+                mock_hf.assert_called_once()
+
+            @patch('app.Chroma')
+            def test_create_vector_store(self, mock_chroma):
+                processed_documents = {
+                    "doc1": [{"text": "content1", "metadata": {}}],
+                    "doc2": [{"text": "content2", "metadata": {}}]
+                }
+                embedding_model = MagicMock()
+                vector_store = create_vector_store(processed_documents, embedding_model, MagicMock())
+                self.assertIsNotNone(vector_store)
+                mock_chroma.from_documents.assert_called_once()
+
+            @patch('app.ChatOllama')
+            @patch('app.MultiQueryRetriever')
+            def test_setup_rag_chain(self, mock_retriever, mock_chat_ollama):
+                vector_store = MagicMock()
+                local_model = "test_model"
+                chain = setup_rag_chain(vector_store, local_model, MagicMock())
+                self.assertIsNotNone(chain)
+                mock_chat_ollama.assert_called_once_with(model=local_model)
+                mock_retriever.from_llm.assert_called_once()
+
+        if __name__ == '__main__':
+            unittest.main()
+        EOF
