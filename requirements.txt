@@ -9,3 +9,4 @@ transformers
 flake8
 coverage
 chromadb
+pypdf
