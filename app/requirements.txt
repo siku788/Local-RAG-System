@@ -8,5 +8,4 @@ langchain_community
 transformers
 flake8
 coverage
-chromadb
-pypdf
+chromadbz
