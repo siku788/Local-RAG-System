@@ -8,4 +8,4 @@ langchain_community
 transformers
 flake8
 coverage
-chromadbz
+chromadb
